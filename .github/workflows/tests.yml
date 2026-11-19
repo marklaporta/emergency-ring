@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    # A fixed image, so that Python 3.9 stays available for the matrix.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the oldest Python the local tools must run on; 3.13 is what
+        # the Lambda runs.
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # Standard library only: there is nothing to install, and no secrets.
+      - run: python -m unittest discover -s tests
+      - run: python scripts/simulate.py
+      - run: python scripts/coverage.py --min 95

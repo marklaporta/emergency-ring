@@ -1,0 +1,74 @@
+# Copy to samconfig.toml (which is gitignored) and fill in your own values.
+# Then `sam deploy` uses them. See docs/settings.md for every
+# parameter and its default.
+#
+# Keep samconfig.toml private: it holds phone numbers and an email address.
+#
+# Clearing a setting. A parameter left out keeps the template's default on the
+# first deploy and its previous value on every later one, so deleting a line
+# here changes nothing. To undo a setting, state it: set it to its default
+# from the Settings table, or, for a value that must be empty, write an empty
+# pair of quotes, for example 'BackupNumber=""'.
+#
+# Quoting. `sam deploy` cuts a value at the first space or quote. A value that
+# contains either must be wrapped: the whole line in single quotes, and the
+# value in double quotes with any quote inside it escaped. For example an
+# OwnerName of two words is written 'OwnerName="Alex Smith"'. The
+# SenderPushoverKeys line below is written the same way.
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "emergency-ring"
+region = "us-west-2"
+template_file = "template.yaml"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+parameter_overrides = [
+  # Who is alerted, as spoken on calls and shown to senders.
+  "OwnerName=Alex",
+
+  # The two arms. This file starts with the push arm alone, which needs
+  # Pushover and no Twilio account.
+  "PushEnabled=true",
+  "CallEnabled=false",
+
+  # Call arm: set CallEnabled=true above and give your Twilio account, your
+  # Twilio number and the phone to ring. The template refuses a call arm
+  # without these three.
+  # "TwilioAccountSid=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  # "TwilioFromNumber=+15555550100",
+  # "PrimaryNumber=+15555550123",
+  # A second phone to ring when the first does not respond. To stop using one
+  # later, write 'BackupNumber=""': deleting the line keeps the old number.
+  # "BackupNumber=+15555550124",
+
+  # Sounds: see https://pushover.net/api#sounds
+  "PushSound=persistent",
+  "TestPushSound=pushover",
+
+  # Telling a sender how their alert ended: sender name to that sender's own
+  # Pushover user key. A user key is a secret. Written without this wrapping
+  # the value reaches AWS as "{", which the template refuses.
+  # 'SenderPushoverKeys="{\"Robin\": \"<their Pushover user key>\"}"',
+
+  # Break-glass, for an automated agent. It stays closed until the
+  # break-glass-tokens secret exists.
+  "BreakGlassMinutes=15",
+  "BreakGlassDailyCap=8",
+  "BreakGlassSound=magic",
+
+  # Where AWS spending alerts and failure alarms are emailed. Omit to skip both.
+  "MonthlyBudgetUsd=5",
+  # "BudgetAlertEmail=<your email address>",
+
+  # Monthly self-test. Leave the timer off if an agent runs the test
+  # (POST /self-test). To use the timer, set it to true, name your time zone
+  # and give the FunctionUrl output without its trailing slash; it then runs
+  # at 14:00 on the first Saturday of the month. The template refuses the
+  # timer without PublicBaseUrl.
+  "SelfTestTimer=false",
+  # "SelfTestTimezone=Europe/London",
+  # "PublicBaseUrl=https://xxxxxxxx.lambda-url.us-west-2.on.aws",
+]

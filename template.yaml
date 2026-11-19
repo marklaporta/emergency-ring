@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Emergency Ring - calls a phone until someone acknowledges.
+
+Parameters:
+  OwnerName:
+    Type: String
+    Default: the owner
+    Description: The person being alerted, as spoken on calls and shown to senders. A first name reads best.
+  CallEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: The phone-call arm. Needs Twilio and PrimaryNumber.
+  PushEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: The Pushover critical-alert arm. At least one arm must be on.
+  FirstArm:
+    Type: String
+    Default: push
+    AllowedValues: [push, call]
+    Description: With both arms on, which one fires first.
+  ArmOffsetSeconds:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 900
+    Description: With both arms on, how long the second waits. 0 fires both at once.
+  CycleSeconds:
+    Type: Number
+    Default: 90
+    MinValue: 30
+    MaxValue: 900
+    Description: How often each arm repeats until someone acknowledges.
+  PrimaryAttempts:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Alert cycles aimed at the primary number before escalating.
+  BackupAttempts:
+    Type: Number
+    Default: 3
+    MinValue: 0
+    Description: Further cycles aimed at the backup number, if one is set.
+  RingTimeout:
+    Type: Number
+    Default: 25
+    MinValue: 5
+    MaxValue: 60
+    Description: Seconds each call rings. Keep it shorter than your voicemail pickup.
+  PushSound:
+    Type: String
+    Default: persistent
+    Description: Pushover sound name; see https://pushover.net/api#sounds.
+  TestPushSound:
+    Type: String
+    Default: pushover
+    Description: >-
+      Sound for drills (triggers sent with "test": true). "vibrate" and "none"
+      also work. Alert volume itself is set in the Pushover app.
+  BreakGlassMinutes:
+    Type: Number
+    Default: 15
+    MinValue: 0
+    Description: >-
+      Break-glass: the most often one agent may alert the owner. Anything it
+      sends sooner is refused and never reaches the phone.
+  BreakGlassDailyCap:
+    Type: Number
+    Default: 8
+    MinValue: 0
+    Description: Break-glass alerts allowed per agent in any 24 hours. 0 = no cap.
+  BreakGlassSound:
+    Type: String
+    Default: magic
+    Description: Pushover sound for a break-glass alert. Keep it gentle.
+  PrimaryNumber:
+    Type: String
+    Default: ''
+    Description: Number to call first, in E.164 form (+15551234567). Needed for the call arm.
+  BackupNumber:
+    Type: String
+    Default: ''
+    Description: Optional second number to escalate to.
+  TwilioAccountSid:
+    Type: String
+    Default: ''
+    Description: Needed for the call arm.
+  TwilioFromNumber:
+    Type: String
+    Default: ''
+    Description: The Twilio number saved as the Emergency Bypass contact. Needed for the call arm.
+  SecretsPrefix:
+    Type: String
+    Default: /emergency-ring
+    AllowedPattern: '^(/[A-Za-z0-9_.-]+)+$'
+    Description: >-
+      SSM Parameter Store path holding the SecureString secrets, created by
+      hand before the first deploy: trigger-tokens (always), twilio-auth-token
+      (call arm), pushover-app-token and pushover-user-key (push arm), and
+      optionally break-glass-tokens.
+  SenderPushoverKeys:
+    Type: String
+    Default: '{}'
+    NoEcho: true
+    # Deploy tools cut an unquoted JSON value at its first quote, leaving "{".
+    AllowedPattern: '^\{.*\}$'
+    ConstraintDescription: >-
+      must be a JSON object such as {"Robin": "their user key"}. In
+      samconfig.toml, wrap the whole override in single quotes and the value
+      in escaped double quotes; samconfig.example.toml shows a working line.
+    Description: >-
+      Optional JSON map of sender name to Pushover user key, so a sender is
+      told when their alert is acknowledged. A user key is a secret: this
+      parameter is hidden in CloudFormation, but the function holds it as a
+      plain environment variable.
+  PublicBaseUrl:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^https://[^/]+$'
+    ConstraintDescription: must be empty, or https:// and a host name with nothing after it
+    Description: >-
+      The Function URL without a trailing slash. Leave empty on first deploy;
+      only the self-test timer needs it.
+  SelfTestTimer:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Run the monthly self-test from a timer in this stack. Needs
+      PublicBaseUrl. Leave it false if an agent runs the test through
+      POST /self-test.
+  SelfTestSchedule:
+    Type: String
+    Default: 'cron(0 14 ? * 7#1 *)'
+    Description: >-
+      When the self-test runs, as an EventBridge Scheduler expression. The
+      default is 14:00 on the first Saturday of each month (7 is Saturday,
+      #1 the first one in the month).
+  SelfTestTimezone:
+    Type: String
+    Default: UTC
+    Description: >-
+      IANA time zone the self-test schedule is read in, for example
+      Europe/London. Daylight saving is followed.
+
+  BudgetAlertEmail:
+    Type: String
+    Default: ''
+    Description: >-
+      Where to send the AWS spending alert and the failure alarms. Leave empty
+      to skip both. AWS emails a confirmation link for the alarms; they stay
+      silent until it is clicked.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: Monthly spend, in US dollars, that triggers the alert.
+
+# Checked at deploy time, so a configuration that cannot work is refused with
+# a sentence, not discovered as a 500 on the first request.
+Rules:
+  AtLeastOneArm:
+    Assertions:
+      - Assert: !Not [!And [!Equals [!Ref CallEnabled, 'false'], !Equals [!Ref PushEnabled, 'false']]]
+        AssertDescription: CallEnabled and PushEnabled cannot both be false.
+  SelfTestTimerNeedsUrl:
+    RuleCondition: !Equals [!Ref SelfTestTimer, 'true']
+    Assertions:
+      - Assert: !Not [!Equals [!Ref PublicBaseUrl, '']]
+        AssertDescription: SelfTestTimer=true needs PublicBaseUrl, the Function URL without a trailing slash.
+  CallArmNeedsTwilio:
+    RuleCondition: !Equals [!Ref CallEnabled, 'true']
+    Assertions:
+      - Assert: !Not [!Equals [!Ref PrimaryNumber, '']]
+        AssertDescription: The call arm needs PrimaryNumber. Set it, or set CallEnabled=false to start with the push arm only.
+      - Assert: !Not [!Equals [!Ref TwilioAccountSid, '']]
+        AssertDescription: The call arm needs TwilioAccountSid. Set it, or set CallEnabled=false.
+      - Assert: !Not [!Equals [!Ref TwilioFromNumber, '']]
+        AssertDescription: The call arm needs TwilioFromNumber. Set it, or set CallEnabled=false.
+
+Conditions:
+  HasBudgetAlert: !Not [!Equals [!Ref BudgetAlertEmail, '']]
+  SelfTestTimerOn: !Equals [!Ref SelfTestTimer, 'true']
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+    # CPU comes with memory. At 512 MB a cold start, which may be the alert
+    # itself, takes about half as long as at 256, for a fraction of a cent.
+    MemorySize: 512
+    Timeout: 25
+
+Resources:
+  IncidentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  TickDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+
+  TickQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      # Must be at least the function timeout.
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TickDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  # Declared here so the logs expire. A log group that Lambda creates by
+  # itself is kept for ever.
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/${AWS::StackName}/function'
+      RetentionInDays: 90
+
+  EmergencyRingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: er.handler.lambda_handler
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+      FunctionUrlConfig:
+        AuthType: NONE
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref IncidentTable
+          TICK_QUEUE_URL: !Ref TickQueue
+          OWNER_NAME: !Ref OwnerName
+          CALL_ENABLED: !Ref CallEnabled
+          PUSH_ENABLED: !Ref PushEnabled
+          FIRST_ARM: !Ref FirstArm
+          ARM_OFFSET_SECONDS: !Ref ArmOffsetSeconds
+          CYCLE_SECONDS: !Ref CycleSeconds
+          PRIMARY_ATTEMPTS: !Ref PrimaryAttempts
+          BACKUP_ATTEMPTS: !Ref BackupAttempts
+          RING_TIMEOUT: !Ref RingTimeout
+          PUSH_SOUND: !Ref PushSound
+          BREAK_GLASS_MINUTES: !Ref BreakGlassMinutes
+          BREAK_GLASS_SOUND: !Ref BreakGlassSound
+          BREAK_GLASS_DAILY_CAP: !Ref BreakGlassDailyCap
+          TEST_PUSH_SOUND: !Ref TestPushSound
+          PRIMARY_NUMBER: !Ref PrimaryNumber
+          BACKUP_NUMBER: !Ref BackupNumber
+          TWILIO_ACCOUNT_SID: !Ref TwilioAccountSid
+          TWILIO_FROM_NUMBER: !Ref TwilioFromNumber
+          SSM_PREFIX: !Ref SecretsPrefix
+          SENDER_PUSHOVER_KEYS: !Ref SenderPushoverKeys
+          PUBLIC_BASE_URL: !Ref PublicBaseUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt TickQueue.QueueName
+        # Read the secrets at cold start. They are encrypted with the
+        # AWS-managed aws/ssm key, whose key policy already lets principals in
+        # this account decrypt through SSM, so no kms:Decrypt statement.
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SecretsPrefix}/*'
+      Events:
+        Tick:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TickQueue.Arn
+            BatchSize: 1
+        SelfTest:
+          # A labelled test through the whole path, so a lapsed account or a
+          # broken deploy shows up on a quiet afternoon and not in an
+          # emergency. Off by default: an agent can run it instead.
+          Type: ScheduleV2
+          Properties:
+            # Named after the stack, so two stacks can share an account and region.
+            Name: !Sub '${AWS::StackName}-self-test'
+            ScheduleExpression: !Ref SelfTestSchedule
+            ScheduleExpressionTimezone: !Ref SelfTestTimezone
+            State: !If [SelfTestTimerOn, ENABLED, DISABLED]
+            Input: '{"action": "selftest"}'
+
+  # Covers the whole AWS account, not just this stack, so a flood of junk
+  # requests (or anything else) cannot run up a bill unnoticed. It does not
+  # see Twilio or Pushover charges.
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasBudgetAlert
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+
+  # An alert system that breaks silently is worse than none. These three
+  # alarms email when the function crashes, when it answers a caller with a
+  # server error, or when a redial tick has failed five times and been parked.
+  OpsTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasBudgetAlert
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref BudgetAlertEmail
+
+  FunctionErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasBudgetAlert
+    Properties:
+      AlarmDescription: Emergency Ring's function raised an error (a redial tick or the self-test failed).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EmergencyRingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+
+  ServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasBudgetAlert
+    Properties:
+      AlarmDescription: Emergency Ring answered a trigger or a callback with a server error.
+      Namespace: AWS/Lambda
+      MetricName: Url5xxCount
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EmergencyRingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+
+  ParkedTicksAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasBudgetAlert
+    Properties:
+      AlarmDescription: A redial tick failed five times and was parked, so an incident may have stopped redialling.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt TickDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+
+  # A call or push that could not be sent is retried and logged, and raises
+  # no error of its own: an incident can limp along on one arm, or a self-test
+  # can end "nobody acknowledged" when in truth no call was ever placed. These
+  # two turn those log lines into an email.
+  SendFailuresFilter:
+    Type: AWS::Logs::MetricFilter
+    Condition: HasBudgetAlert
+    Properties:
+      LogGroupName: !Ref FunctionLogGroup
+      FilterPattern: >-
+        ?"call failed for" ?"could not be connected" ?"push alert failed for"
+        ?"could not record an alert" ?"could not store the push receipt"
+      MetricTransformations:
+        - MetricNamespace: !Sub 'EmergencyRing/${AWS::StackName}'
+          MetricName: SendFailures
+          MetricValue: '1'
+
+  SendFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasBudgetAlert
+    Properties:
+      AlarmDescription: Emergency Ring could not send an alert or place a call (see the function's log).
+      Namespace: !Sub 'EmergencyRing/${AWS::StackName}'
+      MetricName: SendFailures
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref OpsTopic]
+
+Outputs:
+  FunctionUrl:
+    Description: Base URL for the trigger and the Twilio and Pushover callbacks.
+    Value: !GetAtt EmergencyRingFunctionUrl.FunctionUrl
+  DeadLetterQueue:
+    Description: Ticks that failed five times land here. It should stay empty.
+    Value: !Ref TickDeadLetterQueue

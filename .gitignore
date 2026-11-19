@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+.aws-sam/
+samconfig.toml
+.env
+.DS_Store
+CLAUDE.local.md
+build/
+# Generated Shortcut files hold a sender's token and the Pushover keys.
+*.shortcut
+# Local secrets and tooling that must never be committed.
+.env.*
+*.pem
+*.key
+.venv/
+venv/
+.idea/
+.vscode/
+# Private notes and local deploy settings, under any name.
+*.local.md
+*.local.*
+.claude/
+samconfig*
+!samconfig.example.toml
+packaged.y*ml
+.envrc
+env.json
+*.bak
+*.orig

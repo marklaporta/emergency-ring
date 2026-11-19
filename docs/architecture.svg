@@ -1,0 +1,398 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1694" width="900" height="1694" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="t">Emergency Ring architecture</title>
+  <desc id="d">A Shortcut sends a trigger with a secret token to a Lambda function in AWS. The Lambda keeps an incident record in DynamoDB, uses an SQS delayed message as its repeat timer, places a call through Twilio and sends a Pushover alert. Both services call back to the Lambda, which checks each callback. The call travels over the cellular voice network or Wi-Fi Calling and the push over internet data, so either path can fail without silencing the alert. By default the push fires first, the call 30 seconds later, and each repeats every 90 seconds. Acknowledging either one stops both: pressing 1 on a call retracts the push, and acknowledging the push hangs up a ringing call. A second, quieter tier called break-glass lets an assistant agent send one gentle, rate-limited alert through the same function, with its own token and never a call. A kill switch lets the owner pause everything: the active alert is stopped and new ones are refused until the pause ends, which it always does by itself. A monthly self-test, started by a timer or an agent, runs a labelled drill through the whole path, and optional alarms email when the function fails or spending passes the budget.</desc>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1.5 1.5 L8.5 5 L1.5 8.5" fill="none" stroke="#5F5E5A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .title { font-size: 24px; font-weight: 600; fill: #2C2C2A; }
+      .lede  { font-size: 14px; fill: #5F5E5A; }
+      .h     { font-size: 15px; font-weight: 600; }
+      .s     { font-size: 13px; }
+      .note  { font-size: 13px; fill: #5F5E5A; }
+      .cap   { font-size: 15px; font-weight: 600; fill: #2C2C2A; }
+      .aws rect  { fill: #EEEDFE; stroke: #534AB7; }
+      .aws .h    { fill: #3C3489; }
+      .aws .s    { fill: #534AB7; }
+      .ext rect  { fill: #E1F5EE; stroke: #0F6E56; }
+      .ext .h    { fill: #085041; }
+      .ext .s    { fill: #0F6E56; }
+      .line  { fill: none; stroke: #5F5E5A; stroke-width: 1.6; }
+      .back  { stroke-dasharray: 6 5; }
+      .ink   { fill: none; stroke: #2C2C2A; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+      .sender-hair  { fill: #26221F; stroke: #26221F; stroke-width: 2.2; stroke-linejoin: round; }
+      .sender-skin  { fill: #FBE8DB; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .sender-top   { fill: #7F9BBF; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .owner-hair   { fill: #33291F; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .owner-skin   { fill: #F8E2D2; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .owner-shirt  { fill: #DCE8F7; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .owner-top    { fill: #34435E; stroke: #2C2C2A; stroke-width: 2.2; stroke-linejoin: round; }
+      .vague { fill: #E2DFD6; stroke: #B4B2A9; stroke-width: 1.6; }
+      .fine  { stroke-width: 1.4; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="899" height="1693" rx="14" fill="#FBFAF7" stroke="#D3D1C7"/>
+
+  <text class="title" x="40" y="52">Emergency Ring</text>
+  <text class="lede" x="40" y="76">A red button on the sender's phone makes the owner's ring through silent mode until acknowledged, or about 8 minutes.</text>
+
+  <!-- Why the sender pressed the button: an example emergency, here a car accident
+       that leaves nobody hurt and the car unable to drive. -->
+  <g>
+    <path d="M36 262 L366 262" fill="none" stroke="#B4B2A9" stroke-width="2" stroke-linecap="round"/>
+    <path d="M56 262 L56 166" fill="none" stroke="#2C2C2A" stroke-width="3" stroke-linecap="round"/>
+    <rect x="45" y="116" width="22" height="52" rx="5" fill="#2C2C2A"/>
+    <circle cx="56" cy="127" r="5.5" fill="#E24B4A"/>
+    <circle cx="56" cy="127" r="9" fill="none" stroke="#E24B4A" stroke-width="1.2" opacity="0.5"/>
+    <circle cx="56" cy="142" r="5.5" fill="#5F5E5A"/>
+    <circle cx="56" cy="157" r="5.5" fill="#5F5E5A"/>
+
+    <circle cx="264" cy="182" r="9" fill="#E2DFD6" stroke="#B4B2A9" stroke-width="1.4"/>
+    <circle cx="275" cy="167" r="11" fill="#E2DFD6" stroke="#B4B2A9" stroke-width="1.4"/>
+    <circle cx="267" cy="150" r="8" fill="#E2DFD6" stroke="#B4B2A9" stroke-width="1.4"/>
+
+    <path d="M259 246 L259 228 L266 219 L281 216 L295 198 C299 194 303 192 309 192 L338 192 C346 192 352 198 354 206 L360 246 Z" fill="#9A9892" stroke="#2C2C2A" stroke-width="2.2" stroke-linejoin="round"/>
+    <path d="M299 200 L309 198 L334 198 L341 213 L288 213 Z" fill="#DCEBF7" stroke="#2C2C2A" stroke-width="1.6" stroke-linejoin="round"/>
+    <path class="ink fine" d="M264 222 L271 211 L276 220 L283 212"/>
+    <circle cx="287" cy="247" r="12" fill="#2C2C2A"/><circle cx="287" cy="247" r="4.5" fill="#B4B2A9"/>
+    <circle cx="338" cy="247" r="12" fill="#2C2C2A"/><circle cx="338" cy="247" r="4.5" fill="#B4B2A9"/>
+
+    <path d="M80 246 L80 222 C82 212 92 206 104 202 L126 180 C130 174 136 172 144 172 L244 172 C251 172 255 177 255 186 L247 199 L257 212 L248 228 L256 246 Z" fill="#D8342F" stroke="#2C2C2A" stroke-width="2.2" stroke-linejoin="round"/>
+    <path d="M111 202 L129 182 L137 182 L137 202 Z" fill="#DCEBF7" stroke="#2C2C2A" stroke-width="1.6" stroke-linejoin="round"/>
+    <rect x="142" y="182" width="26" height="20" rx="2" fill="#DCEBF7" stroke="#2C2C2A" stroke-width="1.6"/>
+    <rect x="173" y="182" width="25" height="20" rx="2" fill="#DCEBF7" stroke="#2C2C2A" stroke-width="1.6"/>
+    <rect x="203" y="182" width="22" height="20" rx="2" fill="#DCEBF7" stroke="#2C2C2A" stroke-width="1.6"/>
+    <g fill="#FBE8DB" stroke="#2C2C2A" stroke-width="1.3">
+      <circle cx="155" cy="195" r="5.5"/><circle cx="185.5" cy="195" r="5.5"/><circle cx="214" cy="195.5" r="5"/>
+    </g>
+    <path d="M149.5 193 Q155 186 160.5 193 M180 193 Q185.5 186 191 193 M209 193.8 Q214 187.5 219 193.8" fill="none" stroke="#26221F" stroke-width="2.6" stroke-linecap="round"/>
+    <path class="ink fine" d="M140 204 L140 240 M171 204 L171 240 M201 204 L201 240"/>
+    <path class="ink fine" d="M230 176 L230 242" stroke-dasharray="3 3"/>
+    <path class="ink fine" d="M236 190 L243 197 L238 204 L246 212 M240 222 L246 230"/>
+    <rect x="81" y="222" width="7" height="6" rx="1.5" fill="#FAC775" stroke="#2C2C2A" stroke-width="1.2"/>
+    <circle cx="110" cy="247" r="13" fill="#2C2C2A"/><circle cx="110" cy="247" r="5" fill="#B4B2A9"/>
+    <circle cx="210" cy="247" r="13" fill="#2C2C2A"/><circle cx="210" cy="247" r="5" fill="#B4B2A9"/>
+
+    <path d="M258 196 L263 206 L273 203 L267 212 L276 219 L265 220 L264 231 L257 222 L248 228 L251 217 L242 211 L253 209 Z" fill="#FAC775" stroke="#D85A30" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <text class="note" x="44" y="284">Rear-ended at a red light. Nobody hurt, car disabled.</text>
+
+  <!-- The sender, and the phone with the red button -->
+  <g transform="translate(366.4 90) scale(0.92)">
+    <path class="sender-hair" d="M38 70 C30 100 40 120 56 128 Q80 135 104 128 C120 120 130 100 122 70 Z"/>
+    <path class="sender-skin" d="M66 126 L64 158 L96 158 L94 126 Z"/>
+    <path class="sender-top" d="M56 152 C28 156 10 170 6 196 L154 196 C150 170 132 156 104 152 L80 166 Z"/>
+    <path class="sender-top" d="M50 158 C54 142 66 138 68 146 L80 166 L92 146 C94 138 106 142 110 158 C98 168 62 168 50 158 Z"/>
+    <path class="sender-skin" d="M38 76 C30 73 28 86 33 94 C35 97 39 96 39 93 Z"/>
+    <path class="sender-skin" d="M122 76 C130 73 132 86 127 94 C125 97 121 96 121 93 Z"/>
+    <path class="sender-skin" d="M37 72 C35 46 48 24 80 23 C112 24 125 46 123 72 C123 88 120 102 113 114 C105 127 94 135 80 136 C66 135 55 127 47 114 C40 102 37 88 37 72 Z"/>
+    <ellipse cx="53" cy="97" rx="9" ry="5.5" fill="#F2A9A4" opacity="0.5"/>
+    <ellipse cx="107" cy="97" rx="9" ry="5.5" fill="#F2A9A4" opacity="0.5"/>
+    <path class="sender-hair" d="M36 80 C28 46 40 10 80 8 C120 10 132 46 124 80 C122 64 118 50 110 40 C100 46 84 48 70 44 C58 48 46 56 40 68 C38 73 37 77 36 80 Z"/>
+    <rect x="37" y="45" width="11" height="4.5" rx="1.5" fill="#E4E2DA" stroke="#2C2C2A" stroke-width="1.1" transform="rotate(-52 42.5 47)"/>
+    <path class="ink" d="M48 65 Q56 56 67 59 M93 59 Q104 56 112 65" stroke-width="1.8"/>
+    <ellipse cx="58.5" cy="77" rx="7.6" ry="6.6" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2"/>
+    <ellipse cx="101.5" cy="77" rx="7.6" ry="6.6" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2"/>
+    <circle cx="59" cy="77.5" r="3.1" fill="#2C2C2A"/>
+    <circle cx="101" cy="77.5" r="3.1" fill="#2C2C2A"/>
+    <circle cx="60.1" cy="76.3" r="0.9" fill="#FFFFFF"/>
+    <circle cx="102.1" cy="76.3" r="0.9" fill="#FFFFFF"/>
+    <path class="ink fine" d="M51.5 73 L48 70.5 M108.5 73 L112 70.5"/>
+    <path class="ink fine" d="M75.5 93 Q80 97.5 85 93.5"/>
+    <ellipse cx="80" cy="111" rx="6" ry="7" fill="#B85560" stroke="#2C2C2A" stroke-width="1.9"/>
+    <path d="M106 50 C110 56 111 60 106 62 C101 60 102 56 106 50 Z" fill="#9CC7EE" stroke="#2C2C2A" stroke-width="1.2" stroke-linejoin="round"/>
+    <circle cx="128.5" cy="97.5" r="3" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="1.4"/>
+    <rect x="44" y="166" width="72" height="30" rx="3" fill="#D3D1C7" stroke="#2C2C2A" stroke-width="2.2"/>
+    <text x="80" y="186" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#2C2C2A">&lt;/&gt;</text>
+    <rect x="172" y="96" width="40" height="66" rx="6" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2.2"/>
+    <circle cx="192" cy="127" r="12" fill="#E24B4A" stroke="#2C2C2A" stroke-width="2.2"/>
+    <path class="ink" d="M186 154 L198 154" stroke-width="1.6"/>
+    <path d="M192 87 L192 78 M177 90 L172 82 M207 90 L212 82" fill="none" stroke="#E24B4A" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+  <text class="cap" x="592" y="170">The red button</text>
+  <text class="note" x="592" y="192">The sender's Shortcut opens a</text>
+  <text class="note" x="592" y="210">confirm menu, sends the alert, and</text>
+  <text class="note" x="592" y="228">shows when the owner acknowledges</text>
+
+  <path class="line" d="M440 274 L440 326" marker-end="url(#head)"/>
+  <text class="note" x="454" y="292">Trigger, with the sender's secret token</text>
+
+  <!-- AWS -->
+  <rect x="80" y="300" width="740" height="186" rx="12" fill="none" stroke="#B4B2A9" stroke-width="1.4" stroke-dasharray="7 6"/>
+  <text class="note" x="98" y="322" font-weight="600">AWS</text>
+
+  <g class="aws">
+    <rect x="110" y="330" width="190" height="78" rx="10" stroke-width="1.2"/>
+    <text class="h" x="205" y="356" text-anchor="middle">Incident record</text>
+    <text class="s" x="205" y="376" text-anchor="middle">DynamoDB database:</text>
+    <text class="s" x="205" y="393" text-anchor="middle">the system's memory</text>
+  </g>
+  <g class="aws">
+    <rect x="340" y="330" width="200" height="78" rx="10" stroke-width="1.2"/>
+    <text class="h" x="440" y="356" text-anchor="middle">Lambda function</text>
+    <text class="s" x="440" y="376" text-anchor="middle">Checks the sender token,</text>
+    <text class="s" x="440" y="393" text-anchor="middle">then decides each step</text>
+  </g>
+  <g class="aws">
+    <rect x="580" y="330" width="190" height="78" rx="10" stroke-width="1.2"/>
+    <text class="h" x="675" y="356" text-anchor="middle">Repeat timer</text>
+    <text class="s" x="675" y="376" text-anchor="middle">SQS delayed message:</text>
+    <text class="s" x="675" y="393" text-anchor="middle">the system's clock</text>
+  </g>
+  <!-- Upkeep: how a rarely used system is kept from breaking unnoticed -->
+  <g class="aws">
+    <rect x="110" y="424" width="190" height="50" rx="10" stroke-width="1.2"/>
+    <text class="h" x="205" y="445" text-anchor="middle">Monthly self-test</text>
+    <text class="s" x="205" y="463" text-anchor="middle">A drill, by timer or agent</text>
+  </g>
+  <g class="aws">
+    <rect x="580" y="424" width="190" height="50" rx="10" stroke-width="1.2"/>
+    <text class="h" x="675" y="445" text-anchor="middle">Email alarms</text>
+    <text class="s" x="675" y="463" text-anchor="middle">On errors or overspend</text>
+  </g>
+
+  <path class="line" d="M336 369 L304 369" marker-start="url(#head)" marker-end="url(#head)"/>
+  <path class="line" d="M544 369 L576 369" marker-start="url(#head)" marker-end="url(#head)"/>
+
+  <!-- Out to the services and back -->
+  <path class="line" d="M405 408 L302 538" marker-end="url(#head)"/>
+  <path class="line back" d="M342 542 L430 414" marker-end="url(#head)"/>
+  <path class="line" d="M475 408 L578 538" marker-end="url(#head)"/>
+  <path class="line back" d="M538 542 L450 414" marker-end="url(#head)"/>
+
+  <text class="note" x="306" y="506" text-anchor="end">Callbacks carry</text>
+  <text class="note" x="306" y="523" text-anchor="end">Twilio's signature</text>
+  <text class="note" x="574" y="506">Every ack is re-checked</text>
+  <text class="note" x="574" y="523">with Pushover</text>
+
+  <g class="ext">
+    <rect x="190" y="542" width="210" height="78" rx="10" stroke-width="1.2"/>
+    <text class="h" x="295" y="568" text-anchor="middle">Twilio</text>
+    <text class="s" x="295" y="588" text-anchor="middle">Places the call, reads the</text>
+    <text class="s" x="295" y="605" text-anchor="middle">alert, listens for a 1</text>
+  </g>
+  <g class="ext">
+    <rect x="480" y="542" width="210" height="78" rx="10" stroke-width="1.2"/>
+    <text class="h" x="585" y="568" text-anchor="middle">Pushover</text>
+    <text class="s" x="585" y="588" text-anchor="middle">Critical alert with the</text>
+    <text class="s" x="585" y="605" text-anchor="middle">text and a map link</text>
+  </g>
+
+  <path class="line" d="M396 620 L450 728" marker-end="url(#head)"/>
+  <path class="line" d="M540 620 L472 728" marker-end="url(#head)"/>
+
+  <!-- Where the alert lands: a meeting, with the other people drawn as plain
+       silhouettes because only the owner matters to the flow. -->
+  <g>
+    <g transform="translate(112 786)"><path class="vague" d="M-46 80 C-46 46 -26 31 0 31 C26 31 46 46 46 80 Z"/><circle class="vague" cx="0" cy="0" r="25"/></g>
+    <g transform="translate(206 782)"><path class="vague" d="M-46 80 C-46 46 -26 31 0 31 C26 31 46 46 46 80 Z"/><circle class="vague" cx="0" cy="0" r="25"/></g>
+    <g transform="translate(590 782)"><path class="vague" d="M-46 80 C-46 46 -26 31 0 31 C26 31 46 46 46 80 Z"/><circle class="vague" cx="0" cy="0" r="25"/></g>
+    <g transform="translate(690 786)"><path class="vague" d="M-46 80 C-46 46 -26 31 0 31 C26 31 46 46 46 80 Z"/><circle class="vague" cx="0" cy="0" r="25"/></g>
+    <g transform="translate(790 782)"><path class="vague" d="M-46 80 C-46 46 -26 31 0 31 C26 31 46 46 46 80 Z"/><circle class="vague" cx="0" cy="0" r="25"/></g>
+  </g>
+
+  <!-- The owner, in the meeting, with a ringing phone -->
+  <g transform="translate(250 644) scale(1.1)">
+    <path class="owner-skin" d="M62 126 L60 158 L100 158 L98 126 Z"/>
+    <path class="owner-shirt" d="M56 152 C28 156 10 170 6 196 L154 196 C150 170 132 156 104 152 L80 170 Z"/>
+    <path class="owner-top" d="M48 155 C36 164 32 180 32 196 L128 196 C128 180 124 164 112 155 L98 158 L80 188 L62 158 Z"/>
+    <path class="ink fine" d="M80 188 L80 196"/>
+    <path class="owner-shirt" d="M60 148 L80 171 L68 177 L56 154 Z M100 148 L80 171 L92 177 L104 154 Z"/>
+    <path class="owner-skin" d="M36 72 C25 67 21 84 28 95 C31 100 37 99 38 94 Z"/>
+    <path class="owner-skin" d="M124 72 C135 67 139 84 132 95 C129 100 123 99 122 94 Z"/>
+    <path class="ink fine" d="M30 78 C28 83 29 88 32 91 M130 78 C132 83 131 88 128 91"/>
+    <path class="owner-skin" d="M34 70 C32 40 46 16 80 15 C114 16 128 40 126 70 C126 84 124 96 119 108 C113 122 100 136 80 138 C60 136 47 122 41 108 C36 96 34 84 34 70 Z"/>
+    <path d="M35 90 C44 101 58 100 66 101 Q80 107 94 101 C102 100 116 101 125 90 C124 99 122 104 119 108 C113 122 100 136 80 138 C60 136 47 122 41 108 C38 104 36 99 35 90 Z" fill="#77736F" opacity="0.26"/>
+    <path class="owner-hair" d="M35 76 C26 40 38 8 60 3 L56 -5 L66 0 C76 -5 92 -5 103 4 L109 -2 L110 8 C127 18 133 46 125 76 L122 58 C120 44 115 30 108 20 C101 32 90 37 80 33 C70 37 60 34 51 24 C44 32 39 46 38 60 Z"/>
+    <path d="M35 76 C32 66 32 56 34 48 L39 50 C38 54 38 58 38 60 Z M125 76 C128 66 128 56 126 48 L121 50 C122 54 122 58 122 60 Z" fill="#8F8A84"/>
+    <path class="ink fine" d="M64 41 Q80 37 96 41 M68 47 Q80 44 92 47"/>
+    <path d="M45 62 C53 53 63 50 72 52 L72.5 57 C64 55 55 57 47 66 Z M115 62 C107 53 97 50 88 52 L87.5 57 C96 55 105 57 113 66 Z" fill="#2E2520" stroke="#2E2520" stroke-width="1" stroke-linejoin="round"/>
+    <ellipse cx="59.5" cy="74" rx="8" ry="6.4" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2"/>
+    <ellipse cx="100.5" cy="74" rx="8" ry="6.4" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2"/>
+    <circle cx="60" cy="74.5" r="2.9" fill="#2C2C2A"/>
+    <circle cx="100" cy="74.5" r="2.9" fill="#2C2C2A"/>
+    <path class="ink fine" d="M52 84 Q60 87 68 84 M92 84 Q100 87 108 84"/>
+    <path class="ink" d="M75 75 C74 84 71 90 69 94 C67 99 73 102 76 99.5 Q80 103.5 84 99.5 C87 102 93 99 91 94" stroke-width="1.9"/>
+    <path d="M63 111 Q80 106 97 111 Q98 120 80 121 Q62 120 63 111 Z" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2" stroke-linejoin="round"/>
+    <path class="ink fine" d="M63.5 115 L96.5 115 M72 109 L72 120.5 M80 108 L80 121 M88 109 L88 120.5"/>
+    <path d="M119 40 C123 46 124 50 119 52 C114 50 115 46 119 40 Z" fill="#9CC7EE" stroke="#2C2C2A" stroke-width="1.2" stroke-linejoin="round"/>
+    <rect x="172" y="84" width="36" height="62" rx="6" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2.2"/>
+    <path class="ink" d="M185 137 L195 137" stroke-width="1.6"/>
+    <path d="M216 97 Q224 115 216 133 M224 89 Q236 115 224 141 M164 97 Q156 115 164 133" fill="none" stroke="#D85A30" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+  <rect x="50" y="848" width="800" height="42" rx="12" fill="#D9C7A8" stroke="#2C2C2A" stroke-width="2.2"/>
+  <path d="M66 860 L834 860" fill="none" stroke="#BFA982" stroke-width="1.4" stroke-linecap="round"/>
+  <rect x="93" y="838" width="38" height="12" rx="2" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.3"/>
+  <rect x="185" y="838" width="42" height="12" rx="2" fill="#D3D1C7" stroke="#B4B2A9" stroke-width="1.3"/>
+  <rect x="571" y="838" width="38" height="12" rx="2" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.3"/>
+  <rect x="669" y="838" width="42" height="12" rx="2" fill="#D3D1C7" stroke="#B4B2A9" stroke-width="1.3"/>
+  <rect x="771" y="838" width="38" height="12" rx="2" fill="#FFFFFF" stroke="#B4B2A9" stroke-width="1.3"/>
+
+  <!-- Path labels on the two arrows into the phone -->
+  <rect x="390" y="642" width="44" height="20" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.4"/>
+  <text class="s" fill="#085041" x="412" y="656.5" text-anchor="middle" font-weight="600">Call</text>
+  <rect x="498" y="642" width="44" height="20" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.4"/>
+  <text class="s" fill="#712B13" x="520" y="656.5" text-anchor="middle" font-weight="600">Push</text>
+
+  <text class="cap" x="604" y="650">Two independent paths</text>
+  <text class="note" x="604" y="672">Call: the cellular voice network,</text>
+  <text class="note" x="604" y="689">or Wi-Fi Calling when there is none.</text>
+  <text class="note" x="604" y="711">Push: internet data, over Wi-Fi</text>
+  <text class="note" x="604" y="728">or cellular. If one fails, the</text>
+  <text class="note" x="604" y="745">other can still reach the phone.</text>
+
+  <text class="cap" x="56" y="650">The owner's phone</text>
+  <text class="note" x="56" y="672">Sounds through silent mode and</text>
+  <text class="note" x="56" y="689">Focus, as loud as the ringer and</text>
+  <text class="note" x="56" y="706">the Pushover app are set.</text>
+  <text class="note" x="56" y="728">Press 1 on the call, or tap</text>
+  <text class="note" x="56" y="745">acknowledge on the push.</text>
+
+  <!-- Default schedule -->
+  <text class="cap" x="56" y="930">What fires when</text>
+  <text class="note" x="184" y="930">Defaults shown. Every timing is a setting, and either arm can be switched off.</text>
+  <g>
+    <path d="M100 978 L800 978" fill="none" stroke="#B4B2A9" stroke-width="2" stroke-linecap="round"/>
+    <rect x="175" y="970" width="62.5" height="16" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.6"/>
+    <text class="s" fill="#0F6E56" x="206" y="960" text-anchor="middle">Call rings</text>
+    <rect x="400" y="970" width="62.5" height="16" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.6"/>
+    <text class="s" fill="#0F6E56" x="431" y="960" text-anchor="middle">Call rings</text>
+    <rect x="625" y="970" width="62.5" height="16" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.6"/>
+    <text class="s" fill="#0F6E56" x="656" y="960" text-anchor="middle">Call rings</text>
+    <circle cx="100" cy="978" r="9" fill="#FAECE7" stroke="#993C1D" stroke-width="1.6"/>
+    <text class="s" fill="#993C1D" x="100" y="960" text-anchor="middle">Push</text>
+    <circle cx="325" cy="978" r="9" fill="#FAECE7" stroke="#993C1D" stroke-width="1.6"/>
+    <text class="s" fill="#993C1D" x="325" y="960" text-anchor="middle">Push</text>
+    <circle cx="550" cy="978" r="9" fill="#FAECE7" stroke="#993C1D" stroke-width="1.6"/>
+    <text class="s" fill="#993C1D" x="550" y="960" text-anchor="middle">Push</text>
+    <text class="note" x="100" y="1004" text-anchor="middle">0:00</text>
+    <text class="note" x="175" y="1004" text-anchor="middle">0:30</text>
+    <text class="note" x="325" y="1004" text-anchor="middle">1:30</text>
+    <text class="note" x="400" y="1004" text-anchor="middle">2:00</text>
+    <text class="note" x="550" y="1004" text-anchor="middle">3:00</text>
+    <text class="note" x="625" y="1004" text-anchor="middle">3:30</text>
+    <text class="note" x="712" y="1004">until acknowledged, or 8 min</text>
+  </g>
+  <text class="note" x="56" y="1028" font-weight="600" fill="#2C2C2A">Acknowledging either one stops both</text>
+  <g>
+    <rect x="56" y="1042" width="44" height="20" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.4"/>
+    <text class="s" fill="#085041" x="78" y="1056.5" text-anchor="middle" font-weight="600">Call</text>
+    <text class="note" x="108" y="1056.5">press 1</text>
+    <path class="line" d="M160 1052 L196 1052" marker-end="url(#head)"/>
+    <rect x="206" y="1042" width="44" height="20" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.4"/>
+    <text class="s" fill="#712B13" x="228" y="1056.5" text-anchor="middle" font-weight="600">Push</text>
+    <path d="M203 1065 L253 1039" fill="none" stroke="#A32D2D" stroke-width="2.4" stroke-linecap="round"/>
+    <text class="note" x="260" y="1056.5">push retracted</text>
+    <rect x="470" y="1042" width="44" height="20" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1.4"/>
+    <text class="s" fill="#712B13" x="492" y="1056.5" text-anchor="middle" font-weight="600">Push</text>
+    <text class="note" x="522" y="1056.5">acknowledge</text>
+    <path class="line" d="M604 1052 L640 1052" marker-end="url(#head)"/>
+    <rect x="650" y="1042" width="44" height="20" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.4"/>
+    <text class="s" fill="#085041" x="672" y="1056.5" text-anchor="middle" font-weight="600">Call</text>
+    <path d="M647 1065 L697 1039" fill="none" stroke="#A32D2D" stroke-width="2.4" stroke-linecap="round"/>
+    <text class="note" x="704" y="1056.5">ringing call hung up</text>
+  </g>
+  <text class="note" x="56" y="1084">Answering without pressing 1 does not count, because voicemail can answer too.</text>
+
+  <!-- Break-glass: the second tier -->
+  <text class="cap" x="56" y="1126">Break-glass: a quieter tier for an agent</text>
+  <g class="ext">
+    <rect x="56" y="1144" width="176" height="62" rx="10" stroke-width="1.2"/>
+    <text class="h" x="144" y="1169" text-anchor="middle">An assistant agent</text>
+    <text class="s" x="144" y="1189" text-anchor="middle">Judges what can't wait</text>
+  </g>
+  <path class="line" d="M236 1175 L268 1175" marker-end="url(#head)"/>
+  <g class="aws">
+    <rect x="272" y="1144" width="206" height="62" rx="10" stroke-width="1.2"/>
+    <text class="h" x="375" y="1169" text-anchor="middle">Same Lambda function</text>
+    <text class="s" x="375" y="1189" text-anchor="middle">Own token, own rate limits</text>
+  </g>
+  <path class="line" d="M482 1175 L514 1175" marker-end="url(#head)"/>
+  <g class="ext">
+    <rect x="518" y="1144" width="160" height="62" rx="10" stroke-width="1.2"/>
+    <text class="h" x="598" y="1169" text-anchor="middle">Pushover</text>
+    <text class="s" x="598" y="1189" text-anchor="middle">One gentle chime</text>
+  </g>
+  <path class="line" d="M682 1175 L714 1175" marker-end="url(#head)"/>
+  <rect x="720" y="1150" width="30" height="50" rx="6" fill="#FFFFFF" stroke="#2C2C2A" stroke-width="2"/>
+  <path class="ink" d="M730 1193 L740 1193" stroke-width="1.5"/>
+  <text class="note" x="762" y="1171">Never a call,</text>
+  <text class="note" x="762" y="1188">never repeats</text>
+  <text class="note" x="56" y="1232">At most one alert per 15 minutes and 8 a day by default. Anything sooner is refused and never reaches the phone.</text>
+  <text class="note" x="56" y="1250">An agent's token cannot start an emergency.</text>
+
+  <!-- Kill switch -->
+  <text class="cap" x="56" y="1290">Kill switch: if it will not stop ringing</text>
+  <g class="ext">
+    <rect x="56" y="1308" width="176" height="62" rx="10" stroke-width="1.2"/>
+    <text class="h" x="144" y="1333" text-anchor="middle">The owner pauses it</text>
+    <text class="s" x="144" y="1353" text-anchor="middle">Via an agent, or pause.sh</text>
+  </g>
+  <path class="line" d="M236 1339 L268 1339" marker-end="url(#head)"/>
+  <g class="aws">
+    <rect x="272" y="1308" width="206" height="62" rx="10" stroke-width="1.2"/>
+    <text class="h" x="375" y="1333" text-anchor="middle">Same Lambda function</text>
+    <text class="s" x="375" y="1353" text-anchor="middle">Pause, with any valid token</text>
+  </g>
+  <path class="line" d="M482 1339 L514 1339" marker-end="url(#head)"/>
+  <g>
+    <rect x="518" y="1308" width="327" height="62" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="532" y="1333">Everything goes quiet</text>
+    <text class="note" x="532" y="1353">Call hung up, push retracted, new alerts refused</text>
+  </g>
+  <text class="note" x="56" y="1396">A pause lasts 60 minutes by default and a day at most. It always ends by itself, so alerting cannot be left off</text>
+  <text class="note" x="56" y="1414">by accident. A sender who triggers during a pause is told it failed, and their Shortcut sends its backup alert.</text>
+
+  <!-- Design choices -->
+  <g transform="translate(0 384)">
+  <text class="cap" x="56" y="1068">Why it is built this way</text>
+  <g>
+    <rect x="55" y="1084" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="69" y="1109">Why a phone call</text>
+    <text class="note" x="69" y="1131">A contact set to Emergency Bypass</text>
+    <text class="note" x="69" y="1148">rings through silent and Focus.</text>
+  </g>
+  <g>
+    <rect x="325" y="1084" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="339" y="1109">Why Pushover as well</text>
+    <text class="note" x="339" y="1131">Its critical alerts break through</text>
+    <text class="note" x="339" y="1148">too, and show the text and a map.</text>
+  </g>
+  <g>
+    <rect x="595" y="1084" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="609" y="1109">Why two paths</text>
+    <text class="note" x="609" y="1131">Cell voice and internet data fail</text>
+    <text class="note" x="609" y="1148">separately, so one can get through.</text>
+  </g>
+  <g>
+    <rect x="55" y="1174" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="69" y="1199">Why press 1</text>
+    <text class="note" x="69" y="1221">Voicemail can answer a call, but</text>
+    <text class="note" x="69" y="1238">it cannot press a key.</text>
+  </g>
+  <g>
+    <rect x="325" y="1174" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="339" y="1199">Why a secret token</text>
+    <text class="note" x="339" y="1221">Only a sender's token can start</text>
+    <text class="note" x="339" y="1238">an emergency. Others are refused.</text>
+  </g>
+  <g>
+    <rect x="595" y="1174" width="250" height="78" rx="10" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="1.2"/>
+    <text class="h" fill="#2C2C2A" x="609" y="1199">Why serverless</text>
+    <text class="note" x="609" y="1221">Nothing to patch or keep running,</text>
+    <text class="note" x="609" y="1238">and close to free at this scale.</text>
+  </g>
+
+  <!-- Legend -->
+  <rect x="40" y="1272" width="14" height="14" rx="3" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.2"/>
+  <text class="note" x="62" y="1284">Runs in AWS</text>
+  <rect x="170" y="1272" width="14" height="14" rx="3" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.2"/>
+  <text class="note" x="192" y="1284">Outside services</text>
+  <path class="line" d="M330 1279 L372 1279" marker-end="url(#head)"/>
+  <text class="note" x="382" y="1284">Request</text>
+  <path class="line back" d="M466 1279 L508 1279" marker-end="url(#head)"/>
+  <text class="note" x="518" y="1284">Callback</text>
+  </g>
+</svg>
